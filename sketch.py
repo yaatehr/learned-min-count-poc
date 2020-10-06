@@ -11,6 +11,10 @@ def compute_avg_loss(counts, y, y_buckets):
     Returns:
         Estimation error
     """
+    # print("compute_avg_loss")
+    # print(f"counts: {counts}")
+    # print(f"y: {y}")
+    # print(f"y_buckets: {y_buckets}")
     assert np.sum(counts) == np.sum(y), 'counts do not have all the flows!'
     assert len(y) == len(y_buckets)
     if len(y) == 0:
@@ -19,6 +23,7 @@ def compute_avg_loss(counts, y, y_buckets):
     for i in range(len(y)):
         loss += np.abs(y[i] - counts[y_buckets[i]]) * y[i]
     return loss / np.sum(y)
+
 
 def random_hash(y, n_buckets):
     """ Sketch with a random hash
@@ -52,17 +57,17 @@ def count_min(y, n_buckets, n_hash):
         return 0    # avoid division of 0
 
     counts_all = np.zeros((n_hash, n_buckets))
-    y_buckets_all = np.zeros((n_hash, len(y)), dtype=int)
+    y_buckets_all = np.zeros((n_hash, len(y)), dtype=int) # hash x num_items
     for i in range(n_hash):
-        counts, _, y_buckets = random_hash(y, n_buckets)
+        counts, _, y_buckets = random_hash(y, n_buckets) # drop the loss term (y is known here)
         counts_all[i] = counts
-        y_buckets_all[i] = y_buckets
+        y_buckets_all[i] = y_buckets #item -> bucket mapping
 
     loss = 0
     for i in range(len(y)):
-        y_est = np.min([counts_all[k, y_buckets_all[k, i]] for k in range(n_hash)])
+        y_est = np.min([counts_all[k, y_buckets_all[k, i]] for k in range(n_hash)]) #take the min over all hash function for each item
         loss += np.abs(y[i] - y_est) * y[i]
-    return loss / np.sum(y)
+    return loss / np.sum(y) #F_ERR term
 
 def cutoff_countmin(y, n_buckets, b_cutoff, n_hashes):
     """ Learned Count-Min
@@ -85,16 +90,39 @@ def cutoff_countmin(y, n_buckets, b_cutoff, n_hashes):
     for i in range(b_cutoff):
         if i >= len(y):
             break           # more unique buckets than # flows
-        counts[i] += y[i]   # unique bucket for each flow
+        counts[i] += y[i]   # unique bucket for each flow - note sorted from largest first
         y_buckets.append(i)
 
     loss_cf = compute_avg_loss(counts[:b_cutoff], y[:b_cutoff], y_buckets)  # loss = 0
     loss_cm = count_min(y[b_cutoff:], n_buckets - b_cutoff, n_hashes)
 
-    loss_avg = (loss_cf * np.sum(y[:b_cutoff]) + loss_cm * np.sum(y[b_cutoff:])) / np.sum(y)
+    loss_avg = (loss_cf * np.sum(y[:b_cutoff]) + loss_cm * np.sum(y[b_cutoff:])) / np.sum(y) # weight losses by fraction of elements
     print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cm, loss_avg))
 
     space = b_cutoff * 4 * 2 + (n_buckets - b_cutoff) * n_hashes * 4
+    return loss_avg, space
+
+def cutoff_countmin_non_unique(y, n_buckets, b_cutoff, n_hashes):
+    """ Learned Count-Min
+    Args:
+        y: true counts of each item (sorted, largest first), float - [num_items]
+        n_buckets: number of total buckets
+        b_cutoff: number of unique buckets
+        n_hash: number of hash functions
+
+    Returns:
+        loss_avg: estimation error
+        space: space usage in bytes
+    """
+    assert b_cutoff <= n_buckets, 'bucket cutoff cannot be greater than n_buckets'
+
+    loss_cf = count_min(y[:b_cutoff], b_cutoff, n_hashes)
+    loss_cm = count_min(y[b_cutoff:], n_buckets - b_cutoff, n_hashes)
+
+    loss_avg = (loss_cf * np.sum(y[:b_cutoff]) + loss_cm * np.sum(y[b_cutoff:])) / np.sum(y) # weight losses by fraction of elements
+    print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cm, loss_avg))
+
+    space = b_cutoff * n_hashes * 4 + (n_buckets - b_cutoff) * n_hashes * 4
     return loss_avg, space
 
 def cutoff_countmin_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes):
@@ -126,6 +154,84 @@ def cutoff_countmin_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes):
     space = len(y_ccm) * 4 * 2 + n_cm_buckets * n_hashes * 4
     return loss_avg, space
 
+#TODO make double sweep methods and sweep over params to maek graph
+
+def cutoff_countmin_wscore_non_unique(y, scores, score_cutoff, n_cm_buckets, n_hashes):
+    """ Learned Count-Min (use predicted scores to identify heavy hitters)
+    Args:
+        y: true counts of each item (sorted, largest first), float - [num_items]
+        scores: predicted scores of each item - [num_items]
+        score_cutoff: threshold for heavy hitters
+        n_cm_buckets: number of buckets of Count-Min
+        n_hashes: number of hash functions
+
+    Returns:
+        loss_avg: estimation error
+        space: space usage in bytes
+    """
+    if len(y) == 0:
+        return 0            # avoid division of 0
+
+    y_ccm = y[scores >  score_cutoff]
+    y_cm  = y[scores <= score_cutoff]
+
+    loss_cf = count_min(y_ccm, n_cm_buckets, n_hashes)
+    loss_cm = count_min(y_cm, n_cm_buckets, n_hashes)
+
+    assert len(y_ccm) + len(y_cm) == len(y)
+    loss_avg = (loss_cf * np.sum(y_ccm) + loss_cm * np.sum(y_cm)) / np.sum(y)
+    print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cm, loss_avg))
+
+    space = n_cm_buckets * n_hashes * 2 + n_cm_buckets * n_hashes * 4
+    return loss_avg, space
+
+def cutoff_lookup_non_unique(x, y, n_cm_buckets, n_hashes, d_lookup, y_cutoff, sketch='CountMin'):
+    """ Learned Count-Min (use predicted scores to identify heavy hitters)
+    Args:
+        x: feature of each item - [num_items]
+        y: true counts of each item, float - [num_items]
+        n_cm_buckets: number of buckets of Count-Min
+        n_hashes: number of hash functions
+        d_lookup: x[i] -> y[i] look up table
+        y_cutoff: threshold for heavy hitters
+        sketch: type of sketch (CountMin or CountSketch)
+
+    Returns:
+        loss_avg: estimation error
+        space: space usage in bytes
+    """
+    if len(y) == 0:
+        return 0            # avoid division of 0
+
+    y_ccm = []
+    y_cm = []
+    for i in range(len(y)):
+        if x[i] in d_lookup: #if feature is in lookup table, pick which matrix to put it in
+            if d_lookup[x[i]] > y_cutoff:
+                y_ccm.append(y[i])
+            else:
+                y_cm.append(y[i])
+        else:
+            y_cm.append(y[i])
+
+    if sketch == 'CountMin':
+        loss_cf = count_min(y_ccm, n_cm_buckets, n_hashes)
+        loss_cm = count_min(y_cm, n_cm_buckets, n_hashes)
+    elif sketch == 'CountSketch':
+        loss_cf = count_sketch(y_ccm, n_cm_buckets, n_hashes)
+        loss_cm = count_sketch(y_cm, n_cm_buckets, n_hashes)
+    else:
+        assert False, "unknown sketch type"
+
+    assert len(y_ccm) + len(y_cm) == len(y)
+    loss_avg = (loss_cf * np.sum(y_ccm) + loss_cm * np.sum(y_cm)) / np.sum(y)
+    print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cm, loss_avg))
+    print('\t# uniq', len(y_ccm), '# cm', len(y_cm))
+
+    space = (n_cm_buckets * n_hashes * 4)*2
+    return loss_avg, space
+
+    
 def cutoff_lookup(x, y, n_cm_buckets, n_hashes, d_lookup, y_cutoff, sketch='CountMin'):
     """ Learned Count-Min (use predicted scores to identify heavy hitters)
     Args:
@@ -202,9 +308,9 @@ def count_sketch(y, n_buckets, n_hash):
     if len(y) == 0:
         return 0    # avoid division of 0
 
-    counts_all = np.zeros((n_hash, n_buckets))
-    y_buckets_all = np.zeros((n_hash, len(y)), dtype=int)
-    y_signs_all = np.zeros((n_hash, len(y)), dtype=int)
+    counts_all = np.zeros((n_hash, n_buckets)) # hash X buckets matrix
+    y_buckets_all = np.zeros((n_hash, len(y)), dtype=int) # hash X num items
+    y_signs_all = np.zeros((n_hash, len(y)), dtype=int) # same
     for i in range(n_hash):
         counts, y_buckets, y_signs = random_hash_with_sign(y, n_buckets)
         counts_all[i] = counts
@@ -251,7 +357,69 @@ def cutoff_countsketch(y, n_buckets, b_cutoff, n_hashes):
     space = b_cutoff * 4 * 2 + (n_buckets - b_cutoff) * n_hashes * 4
     return loss_avg, space
 
+def cutoff_countsketch_double_sweep(y, n_buckets, b_cutoff, n_hashes):
+    """ Learned Count-Sketch
+    Args:
+        y: true counts of each item (sorted, largest first), float - [num_items]
+        n_buckets: number of total buckets
+        b_cutoff: number of unique buckets
+        n_hash: number of hash functions
+
+    Returns:
+        loss_avg: estimation error
+        space: space usage in bytes
+    """
+    assert b_cutoff <= n_buckets, 'bucket cutoff cannot be greater than n_buckets'
+    counts = np.zeros(n_buckets)
+    if len(y) == 0:
+        return 0            # avoid division of 0
+
+    y_buckets = []
+    for i in range(b_cutoff):
+        if i >= len(y):
+            break           # more unique buckets than # flows
+        counts[i] += y[i]   # unique bucket for each flow
+        y_buckets.append(i)
+
+    loss_cf = count_sketch(y[:b_cutoff], y_buckets)  # loss = 0
+    loss_cs = count_sketch(y[b_cutoff:], n_buckets - b_cutoff, n_hashes)
+
+    loss_avg = (loss_cf * np.sum(y[:b_cutoff]) + loss_cs * np.sum(y[b_cutoff:])) / np.sum(y)
+    print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cs, loss_avg))
+
+    space = b_cutoff * 4 * 2 + (n_buckets - b_cutoff) * n_hashes * 4
+    return loss_avg, space
+
 def cutoff_countsketch_wscore(y, scores, score_cutoff, n_cs_buckets, n_hashes):
+    """ Learned Count-Sketch (use predicted scores to identify heavy hitters)
+    Args:
+        y: true counts of each item (sorted, largest first), float - [num_items]
+        scores: predicted scores of each item - [num_items]
+        score_cutoff: threshold for heavy hitters
+        n_cs_buckets: number of buckets of Count-Sketch
+        n_hashes: number of hash functions
+
+    Returns:
+        loss_avg: estimation error
+        space: space usage in bytes
+    """
+    if len(y) == 0:
+        return 0            # avoid division of 0
+
+    y_ccs = y[scores >  score_cutoff] # we select the heavy hitters
+    y_cs  = y[scores <= score_cutoff] #non heavy
+
+    loss_cf = 0  # put y_ccs into cutoff buckets, no loss
+    loss_cs = count_sketch(y_cs, n_cs_buckets, n_hashes)
+
+    assert len(y_ccs) + len(y_cs) == len(y)
+    loss_avg = (loss_cf * np.sum(y_ccs) + loss_cs * np.sum(y_cs)) / np.sum(y)
+    print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cs, loss_avg))
+
+    space = len(y_ccs) * 4 * 2 + n_cs_buckets * n_hashes * 4
+    return loss_avg, space
+
+def cutoff_countsketch_wscore_double_sweep(y, scores, score_cutoff, n_cs_buckets, n_hashes, n_css_buckets, n_css_hashes):
     """ Learned Count-Sketch (use predicted scores to identify heavy hitters)
     Args:
         y: true counts of each item (sorted, largest first), float - [num_items]
@@ -270,14 +438,14 @@ def cutoff_countsketch_wscore(y, scores, score_cutoff, n_cs_buckets, n_hashes):
     y_ccs = y[scores >  score_cutoff]
     y_cs  = y[scores <= score_cutoff]
 
-    loss_cf = 0  # put y_ccs into cutoff buckets, no loss
+    loss_cf = count_sketch(y_css, n_css_buckets, n_css_hashes)
     loss_cs = count_sketch(y_cs, n_cs_buckets, n_hashes)
 
     assert len(y_ccs) + len(y_cs) == len(y)
     loss_avg = (loss_cf * np.sum(y_ccs) + loss_cs * np.sum(y_cs)) / np.sum(y)
     print('\tloss_cf %.2f\tloss_rd %.2f\tloss_avg %.2f' % (loss_cf, loss_cs, loss_avg))
 
-    space = len(y_ccs) * 4 * 2 + n_cs_buckets * n_hashes * 4
+    space = n_css_buckets*n_css_hashes*4 + n_cs_buckets * n_hashes * 4 
     return loss_avg, space
 
 def order_y_wkey(y, results, key, n_examples=0):

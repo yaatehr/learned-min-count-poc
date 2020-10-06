@@ -8,39 +8,74 @@ from itertools import repeat
 from multiprocessing import Pool
 from utils.utils import get_stat, git_log, get_data_str_with_ports_list
 from utils.aol_utils import get_data_aol_query_list
-from sketch import cutoff_countmin, cutoff_lookup, cutoff_countmin_wscore, order_y_wkey_list
+from sketch import cutoff_countmin, cutoff_lookup, cutoff_countmin_wscore, order_y_wkey_list, cutoff_lookup_non_unique, cutoff_countmin_non_unique, cutoff_countmin_wscore_non_unique
 from sketch import cutoff_countsketch, cutoff_countsketch_wscore
 
 
-def run_ccm(y, b_cutoff, n_hashes, n_buckets, name, sketch_type):
-    start_t = time.time()
-    if sketch_type == 'count_min':
-        loss, space = cutoff_countmin(y, n_buckets, b_cutoff, n_hashes)
-    else:
-        loss, space = cutoff_countsketch(y, n_buckets, b_cutoff, n_hashes)
-    print('%s: bcut: %d, # hashes %d, # buckets %d - loss %.2f\t time: %.2f sec' % \
-        (name, b_cutoff, n_hashes, n_buckets, loss, time.time() - start_t))
+def run_ccm(y, b_cutoff, n_hashes, n_buckets, name, sketch_type, non_unique_mode=False):
+    if not non_unique_mode:
+        start_t = time.time()
+        if sketch_type == 'count_min':
+            loss, space = cutoff_countmin(y, n_buckets, b_cutoff, n_hashes)
+        else:
+            loss, space = cutoff_countsketch(y, n_buckets, b_cutoff, n_hashes)
+        print("With unique buckets:")
+        print('%s: bcut: %d, # hashes %d, # buckets %d - loss %.2f\t time: %.2f sec' % \
+            (name, b_cutoff, n_hashes, n_buckets, loss, time.time() - start_t))
+    else: 
+        start_t = time.time()
+        if sketch_type == 'count_min':
+            loss, space = cutoff_countmin_non_unique(y, n_buckets, b_cutoff, n_hashes)
+        else:
+            raise RuntimeError("not implemented yet")
+
+        print("With two sketch matrices:")
+        print('%s: bcut: %d, # hashes %d, # buckets %d - loss %.2f\t time: %.2f sec' % \
+            (name, b_cutoff, n_hashes, n_buckets, loss, time.time() - start_t))
     return loss, space
 
-def run_ccm_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes, name, sketch_type):
-    start_t = time.time()
-    if sketch_type == 'count_min':
-        loss, space = cutoff_countmin_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes)
+def run_ccm_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes, name, sketch_type, non_unique_mode=False):
+    if not non_unique_mode:
+        start_t = time.time()
+        if sketch_type == 'count_min':
+            loss, space = cutoff_countmin_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes)
+        else:
+            loss, space = cutoff_countsketch_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes)
+        print("with unique buckets: ")
+        print('%s: scut: %.3f, # hashes %d, # cm buckets %d - loss %.2f\t time: %.2f sec' % \
+            (name, score_cutoff, n_hashes, n_cm_buckets, loss, time.time() - start_t))
     else:
-        loss, space = cutoff_countsketch_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes)
-    print('%s: scut: %.3f, # hashes %d, # cm buckets %d - loss %.2f\t time: %.2f sec' % \
-        (name, score_cutoff, n_hashes, n_cm_buckets, loss, time.time() - start_t))
+        start_t = time.time()
+        if sketch_type == 'count_min':
+            loss, space = cutoff_countmin_wscore_non_unique(y, scores, score_cutoff, n_cm_buckets, n_hashes)
+        else:
+            loss, space = cutoff_countsketch_wscore(y, scores, score_cutoff, n_cm_buckets, n_hashes)
+        print("with two sketch matrices: ")
+        print('%s: scut: %.3f, # hashes %d, # cm buckets %d - loss %.2f\t time: %.2f sec' % \
+            (name, score_cutoff, n_hashes, n_cm_buckets, loss, time.time() - start_t))
     return loss, space
 
-def run_ccm_lookup(x, y, n_hashes, n_cm_buckets, d_lookup, s_cutoff, name, sketch_type):
-    start_t = time.time()
-    if sketch_type == 'count_min':
-        loss, space = cutoff_lookup(x, y, n_cm_buckets, n_hashes, d_lookup, s_cutoff)
+def run_ccm_lookup(x, y, n_hashes, n_cm_buckets, d_lookup, s_cutoff, name, sketch_type, non_unique_mode=False):
+    if not non_unique_mode:
+        start_t = time.time()
+        if sketch_type == 'count_min':
+            loss, space = cutoff_lookup(x, y, n_cm_buckets, n_hashes, d_lookup, s_cutoff)
+        else:
+            loss, space = cutoff_lookup(x, y, n_cm_buckets, n_hashes, d_lookup, s_cutoff, \
+                sketch='CountSketch')
+        print("With unique buckets:")
+        print('%s: s_cut: %d, # hashes %d, # cm buckets %d - loss %.2f\t time: %.2f sec' % \
+            (name, s_cutoff, n_hashes, n_cm_buckets, loss, time.time() - start_t))
     else:
-        loss, space = cutoff_lookup(x, y, n_cm_buckets, n_hashes, d_lookup, s_cutoff, \
-            sketch='CountSketch')
-    print('%s: s_cut: %d, # hashes %d, # cm buckets %d - loss %.2f\t time: %.2f sec' % \
-        (name, s_cutoff, n_hashes, n_cm_buckets, loss, time.time() - start_t))
+        start_t = time.time()
+        if sketch_type == 'count_min':
+            loss, space = cutoff_lookup_non_unique(x, y, n_cm_buckets, n_hashes, d_lookup, s_cutoff)
+        else:
+            loss, space = cutoff_lookup_non_unique(x, y, n_cm_buckets, n_hashes, d_lookup, s_cutoff, \
+                sketch='CountSketch')
+        print("With 2 sketch matrices:")
+        print('%s: s_cut: %d, # hashes %d, # cm buckets %d - loss %.2f\t time: %.2f sec' % \
+            (name, s_cutoff, n_hashes, n_cm_buckets, loss, time.time() - start_t))
     return loss, space
 
 def get_great_cut(b_cut, y, max_bcut):
@@ -79,6 +114,7 @@ if __name__ == '__main__':
     argparser.add_argument("--n_workers", type=int, help="number of workers", default=10)
     argparser.add_argument("--aol_data", action='store_true', default=False)
     argparser.add_argument("--count_sketch", action='store_true', default=False)
+    argparser.add_argument("--non_unique_mode", type=int, choices=[0,1], default=0)
     args = argparser.parse_args()
 
     assert not (args.perfect_order and args.lookup_data),   "use either --perfect or --lookup"
@@ -93,6 +129,8 @@ if __name__ == '__main__':
         sketch_type = 'count_sketch'
     else:
         sketch_type = 'count_min'
+    
+    non_unique_mode = args.non_unique_mode == 1
 
     if args.perfect_order:
         name = 'cutoff_%s_param_perfect' % sketch_type
@@ -173,11 +211,11 @@ if __name__ == '__main__':
     pool = Pool(args.n_workers)
     if args.perfect_order:
         y_sorted = np.sort(y_valid)[::-1]
-        results = pool.starmap(run_ccm, zip(repeat(y_sorted), bcut_all, nh_all, nb_all, repeat(name), repeat(sketch_type)))
+        results = pool.starmap(run_ccm, zip(repeat(y_sorted), bcut_all, nh_all, nb_all, repeat(name), repeat(sketch_type), repeat(non_unique_mode)))
     elif args.lookup_data:
-        results = pool.starmap(run_ccm_lookup, zip(repeat(x_valid), repeat(y_valid), nh_all, n_cm_all, repeat(lookup_dict), scut_all, repeat(name), repeat(sketch_type)))
+        results = pool.starmap(run_ccm_lookup, zip(repeat(x_valid), repeat(y_valid), nh_all, n_cm_all, repeat(lookup_dict), scut_all, repeat(name), repeat(sketch_type), repeat(non_unique_mode)))
     else:
-        results = pool.starmap(run_ccm, zip(repeat(y_valid_ordered), bcut_all, nh_all, nb_all, repeat(name), repeat(sketch_type)))
+        results = pool.starmap(run_ccm, zip(repeat(y_valid_ordered), bcut_all, nh_all, nb_all, repeat(name), repeat(sketch_type), repeat(non_unique_mode)))
     pool.close()
     pool.join()
     valid_results, space_actual = zip(*results)
@@ -187,7 +225,8 @@ if __name__ == '__main__':
     scut_all = np.reshape(scut_all, rshape)
     nh_all = np.reshape(nh_all, rshape)
     nb_all = np.reshape(nb_all, rshape)
-
+    if non_unique_mode:
+        log_str += '\n\n\n==== running in non_unique mode!! ====\n\n\n'
     log_str += '==== valid_results ====\n'
     for i in range(len(valid_results)):
         log_str += 'space: %.2f\n' % args.space_list[i]
